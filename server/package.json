@@ -12,6 +12,9 @@
     "test:coverage": "jest --coverage \"tests/(simple|utils|database)\\.test\\.js\"",
     "build-ui": "cd gui && npm install && npm run build"
   },
+  "engines": {
+    "node": ">=14.0.0"
+  },
   "dependencies": {
     "@ai-sdk/openai": "^1.0.0",
     "@langchain/openai": "^0.1.3",
