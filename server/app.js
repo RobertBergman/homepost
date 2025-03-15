@@ -8,6 +8,7 @@ const { LangGraph } = require('langchain/graph');
 const dotenv = require('dotenv');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
+const aiAssistantRoutes = require('./routes/ai-assistant');
 
 // Load environment variables
 dotenv.config();
@@ -130,6 +131,9 @@ async function setupDatabase() {
   }
 }
 
+// Import responses API service
+const responsesApi = require('./services/responses-api');
+
 // Global variable for workflow to avoid recreating on every audio chunk
 let langChainWorkflow;
 
@@ -156,21 +160,50 @@ async function setupLangChain() {
       {
         id: 'analyze',
         action: async ({ text, deviceId }) => {
-          // Check for alert phrases - improved NLP detection
-          // This can be enhanced with more advanced NLP models in the future
-          const alerts = [];
-          const lowerText = text.toLowerCase();
+          let alerts = [];
           
-          // More sophisticated detection: check for whole words to reduce false positives
-          for (const phrase of config.alertPhrases) {
-            const lowerPhrase = phrase.toLowerCase().trim();
-            // Check for whole word match using word boundaries
-            const regex = new RegExp(`\\b${lowerPhrase}\\b`, 'i');
-            if (regex.test(lowerText)) {
-              alerts.push({
-                phrase,
-                severity: phrase === 'emergency' || phrase === 'fire' ? 'high' : 'medium'
-              });
+          try {
+            // Use the new Responses API for advanced analysis
+            const analysis = await responsesApi.analyzeText(text, deviceId);
+            
+            if (analysis && analysis.alerts && Array.isArray(analysis.alerts)) {
+              alerts = analysis.alerts;
+              
+              // Log analysis information
+              if (config.logLevel === 'debug') {
+                console.log(`Advanced analysis result for device ${deviceId}:`, 
+                  JSON.stringify(analysis, null, 2));
+              }
+            } else {
+              // Fallback to the original keyword detection if AI analysis fails
+              const lowerText = text.toLowerCase();
+              
+              for (const phrase of config.alertPhrases) {
+                const lowerPhrase = phrase.toLowerCase().trim();
+                // Check for whole word match using word boundaries
+                const regex = new RegExp(`\\b${lowerPhrase}\\b`, 'i');
+                if (regex.test(lowerText)) {
+                  alerts.push({
+                    phrase,
+                    severity: phrase === 'emergency' || phrase === 'fire' ? 'high' : 'medium'
+                  });
+                }
+              }
+            }
+          } catch (error) {
+            console.error('Error in advanced analysis, falling back to simple detection:', error);
+            
+            // Simple keyword-based fallback
+            const lowerText = text.toLowerCase();
+            for (const phrase of config.alertPhrases) {
+              const lowerPhrase = phrase.toLowerCase().trim();
+              const regex = new RegExp(`\\b${lowerPhrase}\\b`, 'i');
+              if (regex.test(lowerText)) {
+                alerts.push({
+                  phrase,
+                  severity: phrase === 'emergency' || phrase === 'fire' ? 'high' : 'medium'
+                });
+              }
             }
           }
           
@@ -1025,6 +1058,9 @@ app.post('/api/alerts/:id/status', async (req, res) => {
 
 // Serve static files from the 'gui/build' directory
 app.use(express.static(path.join(__dirname, 'gui/build')));
+
+// Register AI Assistant routes
+app.use('/api/assistant', aiAssistantRoutes);
 
 // Catch-all route to return the React app for client-side routing
 app.get('*', (req, res) => {
