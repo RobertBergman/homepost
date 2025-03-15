@@ -4,42 +4,12 @@ const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
 const { createRealtimeAudioTranscriptionRequest } = require('@langchain/openai');
-let LangGraph;
-try {
-  ({ LangGraph } = require('langchain/graph'));
-} catch (error) {
-  console.warn("Warning: langchain/graph module not found; using dummy stub for LangGraph.");
-  LangGraph = class {
-    constructor(options) {
-      this.options = options;
-    }
-    async invoke(args) {
-      const text = (args && typeof args.text === 'string') ? args.text : "";
-      let alerts = [];
-      if (/\bhelp\b/i.test(text)) {
-        alerts.push({ phrase: "help", severity: "medium" });
-      }
-      if (/\bemergency\b/i.test(text)) {
-        alerts.push({ phrase: "emergency", severity: "high" });
-      }
-      if (/\bfire\b/i.test(text)) {
-        alerts.push({ phrase: "fire", severity: "high" });
-      }
-      // Filter alerts for the "should not flag partial word matches" test
-      // Only return alerts for exact word matches, not for words that are part of other words
-      if (text.includes("helpful and enjoy emergency services")) {
-        // This is the test case - return no alerts as we shouldn't match partial words
-        return { text, deviceId: args.deviceId || null, alerts: [] };
-      } else {
-        return { text, deviceId: args.deviceId || null, alerts };
-      }
-    }
-  };
-}
+const { StateGraph } = require('@langchain/langgraph');
 const dotenv = require('dotenv');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
 const aiAssistantRoutes = require('./routes/ai-assistant');
+const responsesApi = require('./services/responses-api');
 
 // Load environment variables
 dotenv.config();
@@ -170,9 +140,6 @@ async function setupDatabase() {
   }
 }
 
-// Import responses API service
-const responsesApi = require('./services/responses-api');
-
 // Global variable for workflow to avoid recreating on every audio chunk
 let langChainWorkflow;
 
@@ -182,142 +149,166 @@ async function setupLangChain() {
     return langChainWorkflow;
   }
   
-  console.log('Initializing LangChain workflow...');
+  console.log('Initializing LangChain workflow with StateGraph...');
   
-  // Create a simple graph for processing transcribed text
-  langChainWorkflow = new LangGraph({
-    nodes: [
-      {
-        id: 'transcribe',
-        action: async ({ text, deviceId }) => {
-          if (config.logLevel === 'debug') {
-            console.log(`Processing transcription from device ${deviceId}`);
-          }
-          return { text, deviceId };
-        }
-      },
-      {
-        id: 'analyze',
-        action: async ({ text, deviceId }) => {
-          let alerts = [];
-          
-          try {
-            // Use the new Responses API for advanced analysis
-            const analysis = await responsesApi.analyzeText(text, deviceId);
-            
-            if (analysis && analysis.alerts && Array.isArray(analysis.alerts)) {
-              alerts = analysis.alerts;
-              
-              // Log analysis information
-              if (config.logLevel === 'debug') {
-                console.log(`Advanced analysis result for device ${deviceId}:`, 
-                  JSON.stringify(analysis, null, 2));
-              }
-            } else {
-              // Fallback to the original keyword detection if AI analysis fails
-              const lowerText = text.toLowerCase();
-              
-              for (const phrase of config.alertPhrases) {
-                const lowerPhrase = phrase.toLowerCase().trim();
-                // Check for whole word match using word boundaries
-                const regex = new RegExp(`\\b${lowerPhrase}\\b`, 'i');
-                if (regex.test(lowerText)) {
-                  alerts.push({
-                    phrase,
-                    severity: phrase === 'emergency' || phrase === 'fire' ? 'high' : 'medium'
-                  });
-                }
-              }
-            }
-          } catch (error) {
-            console.error('Error in advanced analysis, falling back to simple detection:', error);
-            
-            // Simple keyword-based fallback
-            const lowerText = text.toLowerCase();
-            for (const phrase of config.alertPhrases) {
-              const lowerPhrase = phrase.toLowerCase().trim();
-              const regex = new RegExp(`\\b${lowerPhrase}\\b`, 'i');
-              if (regex.test(lowerText)) {
-                alerts.push({
-                  phrase,
-                  severity: phrase === 'emergency' || phrase === 'fire' ? 'high' : 'medium'
-                });
-              }
-            }
-          }
-          
-          return { text, deviceId, alerts };
-        }
-      },
-      {
-        id: 'store',
-        action: async ({ text, deviceId, alerts }) => {
-          // Store transcription in database
-          try {
-            if (text.trim()) {  // Only store non-empty transcriptions
-              await db.run(
-                'INSERT INTO transcriptions (device_id, timestamp, text, confidence) VALUES (?, ?, ?, ?)',
-                [deviceId, new Date().toISOString(), text, 1.0]
-              );
-            }
-            
-            // Create alerts if any were detected
-            for (const alert of alerts) {
-              await db.run(
-                'INSERT INTO alerts (device_id, timestamp, type, message, status) VALUES (?, ?, ?, ?, ?)',
-                [deviceId, new Date().toISOString(), 'keyword_detected', 
-                 `Detected "${alert.phrase}" (${alert.severity} severity)`, 'new']
-              );
-              
-              // Send alert to all connected web clients
-              broadcastToWebClients({
-                type: 'alert',
-                deviceId,
-                timestamp: new Date().toISOString(),
-                message: `Detected "${alert.phrase}" in device ${deviceId}`,
-                severity: alert.severity
-              });
-              
-              // If high severity, also send an audio response to the device
-              if (alert.severity === 'high') {
-                const client = connectedClients.get(deviceId);
-                if (client && client.capabilities && client.capabilities.speaker) {
-                  try {
-                    client.ws.send(JSON.stringify({
-                      type: 'speak',
-                      text: `Alert detected: ${alert.phrase}. Do you need assistance?`
-                    }));
-                  } catch (err) {
-                    console.error(`Error sending alert to device ${deviceId}:`, err);
-                  }
-                }
-              }
-            }
-          } catch (error) {
-            console.error('Error storing transcription:', error);
-            // Implement retry logic for transient database errors
-            if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
-              console.log('Database is busy, retrying in 1 second...');
-              setTimeout(async () => {
-                try {
-                  await this.action({ text, deviceId, alerts });
-                } catch (retryError) {
-                  console.error('Retry failed:', retryError);
-                }
-              }, 1000);
-            }
-          }
-          
-          return { text, deviceId, alerts };
-        }
-      }
-    ],
-    edges: [
-      { source: 'transcribe', target: 'analyze' },
-      { source: 'analyze', target: 'store' }
-    ]
+  // Define a state class for our graph
+  class AudioProcessingState {
+    constructor(data = {}) {
+      this.text = data.text || '';
+      this.deviceId = data.deviceId || '';
+      this.alerts = data.alerts || [];
+    }
+  }
+  
+  // Create a StateGraph for processing transcribed text
+  const workflow = new StateGraph({
+    channels: {
+      text: { value: '' },
+      deviceId: { value: '' },
+      alerts: { value: [] }
+    }
   });
   
+  // Define the transcribe node
+  const transcribeNode = workflow.addNode('transcribe', async (state) => {
+    if (config.logLevel === 'debug') {
+      console.log(`Processing transcription from device ${state.deviceId}`);
+    }
+    return state;
+  });
+  
+  // Define the analyze node
+  const analyzeNode = workflow.addNode('analyze', async (state) => {
+    if (!state.text || !state.text.trim()) {
+      return { ...state, alerts: [] };
+    }
+    
+    let alerts = [];
+    
+    try {
+      // Use the Responses API for advanced analysis
+      const analysis = await responsesApi.analyzeText(state.text, state.deviceId);
+      
+      if (analysis && analysis.alerts && Array.isArray(analysis.alerts)) {
+        alerts = analysis.alerts;
+        
+        // Log analysis information
+        if (config.logLevel === 'debug') {
+          console.log(`Advanced analysis result for device ${state.deviceId}:`, 
+            JSON.stringify(analysis, null, 2));
+        }
+      } else {
+        // Fallback to the original keyword detection if AI analysis fails
+        const lowerText = state.text.toLowerCase();
+        
+        for (const phrase of config.alertPhrases) {
+          const lowerPhrase = phrase.toLowerCase().trim();
+          // Check for whole word match using word boundaries
+          const regex = new RegExp(`\\b${lowerPhrase}\\b`, 'i');
+          if (regex.test(lowerText)) {
+            alerts.push({
+              phrase,
+              severity: phrase === 'emergency' || phrase === 'fire' ? 'high' : 'medium'
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error in advanced analysis, falling back to simple detection:', error);
+      
+      // Simple keyword-based fallback
+      const lowerText = state.text.toLowerCase();
+      for (const phrase of config.alertPhrases) {
+        const lowerPhrase = phrase.toLowerCase().trim();
+        const regex = new RegExp(`\\b${lowerPhrase}\\b`, 'i');
+        if (regex.test(lowerText)) {
+          alerts.push({
+            phrase,
+            severity: phrase === 'emergency' || phrase === 'fire' ? 'high' : 'medium'
+          });
+        }
+      }
+    }
+    
+    // Return updated state with alerts
+    return { ...state, alerts };
+  });
+  
+  // Define the store node
+  const storeNode = workflow.addNode('store', async (state) => {
+    // Store transcription in database
+    try {
+      if (state.text.trim()) {  // Only store non-empty transcriptions
+        await db.run(
+          'INSERT INTO transcriptions (device_id, timestamp, text, confidence) VALUES (?, ?, ?, ?)',
+          [state.deviceId, new Date().toISOString(), state.text, 1.0]
+        );
+      }
+      
+      // Create alerts if any were detected
+      for (const alert of state.alerts) {
+        await db.run(
+          'INSERT INTO alerts (device_id, timestamp, type, message, status) VALUES (?, ?, ?, ?, ?)',
+          [state.deviceId, new Date().toISOString(), 'keyword_detected', 
+           `Detected "${alert.phrase}" (${alert.severity} severity)`, 'new']
+        );
+        
+        // Send alert to all connected web clients
+        broadcastToWebClients({
+          type: 'alert',
+          deviceId: state.deviceId,
+          timestamp: new Date().toISOString(),
+          message: `Detected "${alert.phrase}" in device ${state.deviceId}`,
+          severity: alert.severity
+        });
+        
+        // If high severity, also send an audio response to the device
+        if (alert.severity === 'high') {
+          const client = connectedClients.get(state.deviceId);
+          if (client && client.capabilities && client.capabilities.speaker) {
+            try {
+              client.ws.send(JSON.stringify({
+                type: 'speak',
+                text: `Alert detected: ${alert.phrase}. Do you need assistance?`
+              }));
+            } catch (err) {
+              console.error(`Error sending alert to device ${state.deviceId}:`, err);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error storing transcription:', error);
+      // Implement retry logic for transient database errors
+      if (error.code === 'SQLITE_BUSY' || error.code === 'SQLITE_LOCKED') {
+        console.log('Database is busy, retrying in 1 second...');
+        setTimeout(async () => {
+          try {
+            const retryState = { ...state };
+            await this.action(retryState);
+          } catch (retryError) {
+            console.error('Retry failed:', retryError);
+          }
+        }, 1000);
+      }
+    }
+    
+    return state;
+  });
+  
+  // Add the start node explicitly
+  workflow.addNode('__start__', (state) => state);
+  
+  // Define the workflow edges
+  workflow.addEdge('__start__', 'transcribe');
+  workflow.addEdge('transcribe', 'analyze');
+  workflow.addEdge('analyze', 'store');
+  workflow.addEdge('store', '__end__');
+  
+  // Compile the workflow
+  langChainWorkflow = workflow.compile();
+  
+  console.log('LangGraph workflow initialization complete');
   return langChainWorkflow;
 }
 
@@ -503,9 +494,11 @@ wss.on('connection', async (ws, req) => {
                   
                   // Process transcription through LangChain workflow (now reused)
                   if (message.text.trim()) {
+                    // Initialize the state properly for the StateGraph
                     await workflow.invoke({
                       text: message.text,
-                      deviceId
+                      deviceId: deviceId,
+                      alerts: []
                     });
                   }
                 }

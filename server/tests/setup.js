@@ -3,6 +3,7 @@
 // Mock dependencies
 jest.mock('langchain/graph', () => require('./mocks/langchain'));
 jest.mock('@langchain/openai', () => require('./mocks/openai'));
+jest.mock('@langchain/langgraph', () => require('./mocks/langgraph'));
 jest.mock('fs', () => {
   const originalFs = jest.requireActual('fs');
   return {
