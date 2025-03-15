@@ -1,0 +1,17 @@
+[Unit]
+Description=Home Monitoring Client
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/homepost/client
+ExecStart=/usr/bin/node client.js
+Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=homepost-client
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+
+# Build files
+server/gui/build/
+
+# Coverage
+server/coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Mac OS
+.DS_Store
+
+# SQLite database
+*.sqlite
+*.db
+
+# IDE files
+.vscode/
+.idea/
