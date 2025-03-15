@@ -134,5 +134,13 @@ process.on('SIGINT', () => {
   });
 });
 
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM, shutting down server...');
+  server.close(() => {
+    console.log('Server stopped');
+    process.exit(0);
+  });
+});
+
 // Start the server
 startServer();

@@ -12,11 +12,12 @@ const aiAssistantRoutes = require('./routes/ai-assistant');
 
 // Load environment variables
 dotenv.config();
+const logger = require('./logger');
 
 // Check for required environment variables
 if (!process.env.OPENAI_API_KEY) {
-  console.error('ERROR: OPENAI_API_KEY environment variable is not set!');
-  console.error('Please create a .env file with your OpenAI API key.');
+  logger.error('ERROR: OPENAI_API_KEY environment variable is not set!');
+  logger.error('Please create a .env file with your OpenAI API key.');
   process.exit(1);
 }
 
@@ -715,6 +716,11 @@ function broadcastToWebClients(message) {
 
 // API endpoints with improved error handling and filtering
 app.use(express.json()); // Add JSON body parsing middleware
+
+// Health-check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Add basic API middleware
 function apiMiddleware(req, res, next) {
