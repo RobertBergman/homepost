@@ -1,6 +1,7 @@
 const WebSocket = require('ws');
 const mic = require('mic');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
@@ -204,8 +205,13 @@ function connectToServer() {
             break;
             
           case 'speak':
-            if (config.speakerEnabled && data.text) {
-              speakResponse(data.text);
+            if (data.text) {
+              log.info(`Received text from OpenAI: ${data.text}`);
+              if (config.speakerEnabled) {
+                speakResponse(data.text);
+              }
+            } else {
+              log.warn('Received speak message without text');
             }
             break;
             
@@ -421,6 +427,15 @@ function handleCommand(command, params) {
   
   try {
     switch (command) {
+      case 'speak':
+        if (params && params.text) {
+          log.info(`Command speak received: ${params.text}`);
+          speakResponse(params.text);
+        } else {
+          log.warn('Speak command received without text parameter');
+        }
+        break;
+        
       case 'restart':
         log.info('Restarting client...');
         // Graceful shutdown
@@ -521,42 +536,113 @@ function getActiveConnection() {
 }
 
 // Use text-to-speech to speak responses with better error handling
-function speakResponse(text) {
+// Now using OpenAI's TTS API
+async function speakResponse(text) {
   if (!config.speakerEnabled || !text) {
     return;
   }
   
   log.info(`Speaking: ${text}`);
   
-  // Sanitize text to prevent command injection
+  try {
+    // Check if OpenAI API key is configured
+    if (!config.openai || !config.openai.apiKey) {
+      log.error('OpenAI API key not configured. Please add it to config.json');
+      fallbackSpeech(text);
+      return;
+    }
+
+    // Use the OpenAI TTS helper
+    const ttsHelperPath = path.join(__dirname, 'openai-tts.js');
+    
+    // Create a temporary file for the speech MP3
+    const tempFile = path.join(os.tmpdir(), `speech-${Date.now()}.mp3`);
+    
+    // Run the OpenAI TTS helper as a separate process
+    const ttsProcess = spawn('node', [
+      ttsHelperPath, 
+      '--text', text,
+      '--output', tempFile,
+      '--apiKey', config.openai.apiKey,
+      '--voice', config.openai.voice || 'alloy'
+    ]);
+    
+    // Wait for the TTS process to complete
+    ttsProcess.on('close', (code) => {
+      if (code !== 0) {
+        log.error(`OpenAI TTS process exited with code ${code}`);
+        fallbackSpeech(text);
+        return;
+      }
+      
+      // Play the audio file
+      let player;
+      if (process.platform === 'win32') {
+        player = spawn('powershell', [
+          '-c', 
+          `(New-Object Media.SoundPlayer "${tempFile}").PlaySync()`
+        ]);
+      } else if (process.platform === 'darwin') {
+        player = spawn('afplay', [tempFile]);
+      } else {
+        player = spawn('aplay', [tempFile]);
+      }
+      
+      player.on('error', (err) => {
+        log.error('Error playing audio:', err);
+      });
+      
+      player.on('close', () => {
+        // Clean up temp file
+        try {
+          fs.unlinkSync(tempFile);
+        } catch (err) {
+          log.debug('Error removing temp file:', err);
+        }
+      });
+    });
+    
+    ttsProcess.on('error', (err) => {
+      log.error('Error starting OpenAI TTS process:', err);
+      fallbackSpeech(text);
+    });
+    
+    // Handle stderr for debugging
+    ttsProcess.stderr.on('data', (data) => {
+      log.debug(`OpenAI TTS stderr: ${data}`);
+    });
+    
+  } catch (error) {
+    log.error('Failed to use OpenAI TTS:', error);
+    fallbackSpeech(text);
+  }
+}
+
+// Fallback speech function if OpenAI TTS fails
+function fallbackSpeech(text) {
   const sanitizedText = text.replace(/[;&|<>$]/g, '');
   
   try {
-    // Use espeak for text-to-speech
-    // Install with: sudo apt-get install espeak
-    const espeak = spawn('espeak', [sanitizedText]);
-    
-    espeak.on('error', (err) => {
-      log.error('Error with text-to-speech:', err);
-      log.info('Make sure espeak is installed with: sudo apt-get install espeak');
-    });
-    
-    // Capture output for debugging
-    espeak.stdout.on('data', (data) => {
-      log.debug(`espeak stdout: ${data}`);
-    });
-    
-    espeak.stderr.on('data', (data) => {
-      log.debug(`espeak stderr: ${data}`);
-    });
-    
-    espeak.on('close', (code) => {
-      if (code !== 0) {
-        log.warn(`espeak process exited with code ${code}`);
-      }
-    });
+    if (process.platform === 'win32') {
+      // Use Windows PowerShell for text-to-speech as fallback
+      const powershell = spawn('powershell', [
+        '-c',
+        `Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('${sanitizedText.replace(/'/g, "''")}')`
+      ]);
+      
+      powershell.on('error', (err) => {
+        log.error('Error with fallback Windows text-to-speech:', err);
+      });
+    } else {
+      // Use espeak for text-to-speech on Linux as fallback
+      const espeak = spawn('espeak', [sanitizedText]);
+      
+      espeak.on('error', (err) => {
+        log.error('Error with fallback text-to-speech:', err);
+      });
+    }
   } catch (error) {
-    log.error('Failed to spawn espeak process:', error);
+    log.error('Failed to use fallback speech:', error);
   }
 }
 
