@@ -262,4 +262,65 @@ if (modulesToAdd.length > 0) {
 // Write the modified content back to client.js
 fs.writeFileSync(clientJsPath, clientJs);
 
+// Now patch the mic module to use the full path to sox.exe
+console.log('Patching mic module to use the full path to sox.exe...');
+
+// Find the mic.js file
+const micJsPath = path.join(__dirname, 'node_modules', 'mic', 'lib', 'mic.js');
+if (fs.existsSync(micJsPath)) {
+  // Read the mic.js content
+  let micJs = fs.readFileSync(micJsPath, 'utf8');
+  
+  // Check if it's already patched
+  if (micJs.includes('// [WINDOWS-SOX-PATCH]')) {
+    console.log('mic.js already patched for Windows. No changes needed.');
+  } else {
+    // Find the exact sox path
+    let soxExePath = '';
+    const soxDir = path.join(__dirname, 'sox');
+    
+    if (fs.existsSync(soxDir)) {
+      // Check for sox.exe directly in the sox directory
+      if (fs.existsSync(path.join(soxDir, 'sox.exe'))) {
+        soxExePath = path.join(soxDir, 'sox.exe');
+      } else {
+        // Look for any sox-* directories
+        try {
+          const items = fs.readdirSync(soxDir);
+          for (const item of items) {
+            if (item.startsWith('sox-') && fs.statSync(path.join(soxDir, item)).isDirectory()) {
+              const nestedSoxPath = path.join(soxDir, item, 'sox.exe');
+              if (fs.existsSync(nestedSoxPath)) {
+                soxExePath = nestedSoxPath;
+                break;
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Error scanning sox directory:', err);
+        }
+      }
+    }
+    
+    if (soxExePath) {
+      // Escape backslashes for string literal
+      const escapedSoxPath = soxExePath.replace(/\\/g, '\\\\');
+      
+      // Replace the sox spawn line with full path
+      micJs = micJs.replace(
+        "audioProcess = spawn('sox', ['-b', bitwidth, '--endian', endian,",
+        `audioProcess = spawn('${escapedSoxPath}', ['-b', bitwidth, '--endian', endian, // [WINDOWS-SOX-PATCH]`
+      );
+      
+      // Write the modified content back to mic.js
+      fs.writeFileSync(micJsPath, micJs);
+      console.log(`Successfully patched mic.js to use sox at: ${soxExePath}`);
+    } else {
+      console.warn('Could not find sox.exe. Install script will download it.');
+    }
+  }
+} else {
+  console.warn('Could not find mic.js. Make sure the mic module is installed.');
+}
+
 console.log('Successfully patched client.js for Windows!');
