@@ -51,11 +51,15 @@ Write-Host "Windows has built-in text-to-speech capabilities, no additional inst
 $ttsScriptPath = Join-Path $PSScriptRoot "openai-tts.js"
 if (Test-Path $ttsScriptPath) {
     # Set the executable bit (only meaningful on Unix, but doesn't hurt on Windows)
-    $acl = Get-Acl $ttsScriptPath
-    $permission = "Everyone", "FullControl", "Allow"
-    $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule $permission
-    $acl.SetAccessRule($accessRule)
-    Set-Acl $ttsScriptPath $acl
+    try {
+        $acl = Get-Acl $ttsScriptPath
+        $permission = "Everyone", "FullControl", "Allow"
+        $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule $permission
+        $acl.SetAccessRule($accessRule)
+        Set-Acl $ttsScriptPath $acl
+    } catch {
+        Write-Host "Note: Could not set full permissions on TTS script (non-critical): $_" -ForegroundColor Yellow
+    }
 }
 
 # Prompt for OpenAI API key
@@ -204,16 +208,61 @@ function CreateScheduledTask {
         $trigger = New-ScheduledTaskTrigger -AtLogon
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
         
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "HomePost Monitoring Client" -RunLevel Highest
-        
-        Write-Host "Scheduled task created successfully. The client will start automatically at logon." -ForegroundColor Green
-    } catch {
+        try {
+            # Try with highest privileges first
+            Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "HomePost Monitoring Client" -RunLevel Highest
+            Write-Host "Scheduled task created successfully with highest privileges." -ForegroundColor Green
+            return $true
+        } 
+        catch {
+            # If that fails, try with limited privileges
+            try {
+                Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description "HomePost Monitoring Client"
+                Write-Host "Scheduled task created successfully with limited privileges." -ForegroundColor Green
+                return $true
+            }
+            catch {
+                Write-Host "Could not create scheduled task: $_" -ForegroundColor Red
+                return $false
+            }
+        }
+    } 
+    catch {
         Write-Host "Failed to create scheduled task: $_" -ForegroundColor Red
-        Write-Host "You can start the client manually by running the start-homepost-client.bat file." -ForegroundColor Yellow
+        return $false
+    }
+}
+
+# Function to create a startup shortcut (alternative for non-admin users)
+function CreateStartupShortcut {
+    try {
+        $startupFolder = [Environment]::GetFolderPath("Startup")
+        $shortcutPath = Join-Path $startupFolder "HomePostClient.lnk"
+        $fullBatchPath = (Get-Item $batchPath).FullName
+        
+        # Create a Windows shortcut
+        $WshShell = New-Object -ComObject WScript.Shell
+        $Shortcut = $WshShell.CreateShortcut($shortcutPath)
+        $Shortcut.TargetPath = $fullBatchPath
+        $Shortcut.WorkingDirectory = $PSScriptRoot
+        $Shortcut.Description = "HomePost Monitoring Client"
+        $Shortcut.Save()
+        
+        Write-Host "Startup shortcut created at: $shortcutPath" -ForegroundColor Green
+        Write-Host "The client will start automatically when you log in." -ForegroundColor Green
+        return $true
+    } 
+    catch {
+        Write-Host "Failed to create startup shortcut: $_" -ForegroundColor Red
+        return $false
     }
 }
 
 # Setup Windows service using NSSM if administrator
+$serviceInstalled = $false
+$taskCreated = $false
+$shortcutCreated = $false
+
 if ($isAdmin) {
     # Check if NSSM is already available
     $nssmPath = Join-Path $PSScriptRoot "nssm.exe"
@@ -226,7 +275,8 @@ if ($isAdmin) {
             $tempFile = [System.IO.Path]::GetTempFileName() + ".zip"
             
             # Use .NET WebClient as it's available in most PowerShell versions
-            (New-Object System.Net.WebClient).DownloadFile($nssmUrl, $tempFile)
+            $webClient = New-Object System.Net.WebClient
+            $webClient.DownloadFile($nssmUrl, $tempFile)
             
             # Extract nssm.exe from the zip
             Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -246,11 +296,13 @@ if ($isAdmin) {
             
             $zip.Dispose()
             Remove-Item $tempFile -Force
-        } catch {
+        } 
+        catch {
             Write-Host "Failed to download NSSM: $_" -ForegroundColor Red
             Write-Host "Please download NSSM manually from https://nssm.cc and place nssm.exe in the client directory" -ForegroundColor Yellow
         }
-    } else {
+    } 
+    else {
         $nssmDownloaded = $true
     }
     
@@ -258,51 +310,74 @@ if ($isAdmin) {
     if ($nssmDownloaded) {
         Write-Host "Installing Windows service..." -ForegroundColor Green
         
-        # Remove existing service if it exists
-        & $nssmPath stop HomePostClient 2>$null
-        & $nssmPath remove HomePostClient confirm 2>$null
-        
-        # Full path to Node.js
-        $nodePath = (Get-Command node).Source
-        $clientPath = Join-Path $PSScriptRoot "client.js"
-        
-        # Install the service
-        & $nssmPath install HomePostClient $nodePath $clientPath
-        & $nssmPath set HomePostClient DisplayName "HomePost Monitoring Client"
-        & $nssmPath set HomePostClient Description "Client for the HomePost Monitoring System"
-        & $nssmPath set HomePostClient AppDirectory $PSScriptRoot
-        & $nssmPath set HomePostClient AppStdout (Join-Path $PSScriptRoot "service-output.log")
-        & $nssmPath set HomePostClient AppStderr (Join-Path $PSScriptRoot "service-error.log")
-        & $nssmPath set HomePostClient Start SERVICE_AUTO_START
-        
-        # Start the service
-        & $nssmPath start HomePostClient
-        
-        Write-Host "Service installed and started successfully." -ForegroundColor Green
-    } else {
-        Write-Host "Could not install Windows service. Creating Task Scheduler task instead..." -ForegroundColor Yellow
-        CreateScheduledTask
+        try {
+            # Remove existing service if it exists
+            & $nssmPath stop HomePostClient 2>$null
+            & $nssmPath remove HomePostClient confirm 2>$null
+            
+            # Full path to Node.js
+            $nodePath = (Get-Command node).Source
+            $clientPath = Join-Path $PSScriptRoot "client.js"
+            
+            # Install the service
+            & $nssmPath install HomePostClient $nodePath $clientPath
+            & $nssmPath set HomePostClient DisplayName "HomePost Monitoring Client"
+            & $nssmPath set HomePostClient Description "Client for the HomePost Monitoring System"
+            & $nssmPath set HomePostClient AppDirectory $PSScriptRoot
+            & $nssmPath set HomePostClient AppStdout (Join-Path $PSScriptRoot "service-output.log")
+            & $nssmPath set HomePostClient AppStderr (Join-Path $PSScriptRoot "service-error.log")
+            & $nssmPath set HomePostClient Start SERVICE_AUTO_START
+            
+            # Start the service
+            & $nssmPath start HomePostClient
+            
+            Write-Host "Service installed and started successfully." -ForegroundColor Green
+            $serviceInstalled = $true
+        }
+        catch {
+            Write-Host "Failed to install service: $_" -ForegroundColor Red
+            $serviceInstalled = $false
+        }
     }
-} else {
-    Write-Host "Not running as Administrator, creating Task Scheduler task instead..." -ForegroundColor Yellow
-    CreateScheduledTask
 }
 
+# If service installation failed or not admin, try scheduled task
+if (-not $serviceInstalled) {
+    Write-Host "Setting up auto-start using Task Scheduler..." -ForegroundColor Yellow
+    $taskCreated = CreateScheduledTask
+    
+    # If scheduled task failed too, create a startup shortcut
+    if (-not $taskCreated) {
+        Write-Host "Setting up auto-start using Startup folder..." -ForegroundColor Yellow
+        $shortcutCreated = CreateStartupShortcut
+    }
+}
 
 # Display completion message
+Write-Host ""
 Write-Host "Installation complete!" -ForegroundColor Green
 Write-Host ""
+
 Write-Host "Client Management:" -ForegroundColor Yellow
-if ($isAdmin -and $nssmDownloaded) {
+if ($serviceInstalled) {
     Write-Host "- To check status: nssm status HomePostClient" -ForegroundColor White
     Write-Host "- To start: nssm start HomePostClient" -ForegroundColor White
     Write-Host "- To stop: nssm stop HomePostClient" -ForegroundColor White
     Write-Host "- To restart: nssm restart HomePostClient" -ForegroundColor White
     Write-Host "- Logs are in: service-output.log and service-error.log" -ForegroundColor White
-} else {
+} 
+elseif ($taskCreated) {
+    Write-Host "- The client will start automatically when you log in (via Task Scheduler)" -ForegroundColor White
     Write-Host "- To start manually: run start-homepost-client.bat" -ForegroundColor White
-    Write-Host "- To run in background: Right-click start-homepost-client.bat and select 'Run as administrator'" -ForegroundColor White
-    Write-Host "- The client will start automatically at logon via Task Scheduler" -ForegroundColor White
+    Write-Host "- To view scheduled tasks: open Task Scheduler and look for 'HomePostClient'" -ForegroundColor White
+}
+elseif ($shortcutCreated) {
+    Write-Host "- The client will start automatically when you log in (via Startup folder)" -ForegroundColor White
+    Write-Host "- To start manually: run start-homepost-client.bat" -ForegroundColor White
+}
+else {
+    Write-Host "- To start manually: run start-homepost-client.bat" -ForegroundColor White
+    Write-Host "- Auto-start was not configured. Run this installer as Administrator for more options." -ForegroundColor White
 }
 
 Write-Host ""
