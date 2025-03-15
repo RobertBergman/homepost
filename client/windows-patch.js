@@ -26,11 +26,33 @@ if (clientJs.includes('// [WINDOWS-PATCH]')) {
   process.exit(0);
 }
 
-// Add Windows detection
+// Add Windows detection and SoX path setup
 clientJs = clientJs.replace(
   'const isConnected = false;',
   `const isConnected = false;
-const isWindows = process.platform === 'win32'; // [WINDOWS-PATCH]`
+const isWindows = process.platform === 'win32'; // [WINDOWS-PATCH]
+
+// Setup SoX paths for Windows
+if (isWindows) {
+  // Add local sox directory to PATH if it exists
+  const soxDir = path.join(__dirname, 'sox');
+  if (fs.existsSync(soxDir)) {
+    process.env.PATH = \`\${soxDir};\${process.env.PATH}\`;
+    log.info('Added local SoX directory to PATH');
+    
+    // Also update mic configuration to use local sox.exe
+    if (config.micConfig) {
+      config.micConfig.endian = 'little';  // Ensure correct endianness for Windows
+      
+      // Extend mic config with the explicit path to sox.exe
+      config.micConfig.soxPath = path.join(soxDir, 'sox.exe');
+      log.info(\`Using SoX from: \${config.micConfig.soxPath}\`);
+    }
+  } else {
+    log.warn('Local SoX directory not found. Audio capture may not work properly.');
+    log.info('Please run install.ps1 to install SoX.');
+  }
+}`
 );
 
 // Patch the speakResponse function to use OpenAI TTS

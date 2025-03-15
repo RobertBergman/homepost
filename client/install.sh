@@ -52,6 +52,13 @@ else
   echo "espeak is already installed"
 fi
 
+# Install sox for audio capture
+if ! command -v sox &> /dev/null; then
+  sudo apt install -y sox
+else
+  echo "sox is already installed"
+fi
+
 # Install node packages
 echo "Installing Node.js packages..."
 npm install

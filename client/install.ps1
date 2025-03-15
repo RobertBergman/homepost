@@ -47,6 +47,50 @@ node windows-patch.js
 # Check for text-to-speech capability
 Write-Host "Windows has built-in text-to-speech capabilities, no additional installation required" -ForegroundColor Green
 
+# Check for SOX audio utility
+$soxPath = Join-Path $PSScriptRoot "sox"
+if (-not (Test-Path $soxPath)) {
+    Write-Host "Installing SoX (Sound eXchange) for audio capture..." -ForegroundColor Green
+    
+    try {
+        # Download SoX for Windows
+        $soxUrl = "https://sourceforge.net/projects/sox/files/sox/14.4.2/sox-14.4.2-win32.zip/download"
+        $tempFile = [System.IO.Path]::GetTempFileName() + ".zip"
+        
+        Write-Host "Downloading SoX from SourceForge..." -ForegroundColor Green
+        $webClient = New-Object System.Net.WebClient
+        $webClient.DownloadFile($soxUrl, $tempFile)
+        
+        # Create directory for SoX
+        New-Item -ItemType Directory -Force -Path $soxPath | Out-Null
+        
+        # Extract SoX
+        Write-Host "Extracting SoX..." -ForegroundColor Green
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($tempFile, $soxPath)
+        
+        # Add SoX to PATH for this session
+        $env:Path = "$soxPath;$env:Path"
+        
+        # Clean up temp file
+        Remove-Item $tempFile -Force
+        
+        Write-Host "SoX installed successfully" -ForegroundColor Green
+        
+        # Modify client.js to use the local sox.exe
+        Write-Host "Configuring client to use local SoX installation..." -ForegroundColor Green
+        
+        # This will be handled by the windows-patch.js script
+        
+    } catch {
+        Write-Host "Failed to install SoX: $_" -ForegroundColor Red
+        Write-Host "Audio capture may not work properly." -ForegroundColor Yellow
+        Write-Host "Please download SoX manually from https://sourceforge.net/projects/sox/files/sox/" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "SoX directory already exists, skipping download" -ForegroundColor Green
+}
+
 # Make openai-tts.js executable
 $ttsScriptPath = Join-Path $PSScriptRoot "openai-tts.js"
 if (Test-Path $ttsScriptPath) {
