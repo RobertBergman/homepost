@@ -5,11 +5,18 @@
   "main": "client.js",
   "scripts": {
     "start": "node client.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "mic": "^2.1.2",
     "ws": "^8.18.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-mock-extended": "^3.0.5",
+    "mock-fs": "^5.2.0"
   },
   "author": "",
   "license": "MIT"
