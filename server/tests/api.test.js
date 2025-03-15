@@ -9,6 +9,11 @@ beforeAll(async () => {
   // Add some test data
   const db = require('../app').db();
   
+  // Clean up any existing test data first to avoid constraint errors
+  await db.run('DELETE FROM alerts WHERE device_id = ?', ['test-device-1']);
+  await db.run('DELETE FROM transcriptions WHERE device_id = ?', ['test-device-1']);
+  await db.run('DELETE FROM devices WHERE id = ?', ['test-device-1']);
+  
   // Add a test device
   await db.run(
     'INSERT INTO devices (id, name, location, capabilities, last_seen) VALUES (?, ?, ?, ?, ?)',

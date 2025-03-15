@@ -4,12 +4,12 @@
   "description": "Central server for Home Monitoring System",
   "main": "server.js",
   "scripts": {
+    "test:all": "NODE_ENV=test jest",
     "start": "node dist/server.js",
     "dev": "nodemon server.js",
     "build": "babel server.js app.js routes services -d dist",
     "postinstall": "npm run build",
     "test": "jest \"tests/(simple|utils|database)\\.test\\.js\"",
-    "test:all": "jest",
     "test:watch": "jest --watch \"tests/(simple|utils|database)\\.test\\.js\"",
     "test:coverage": "jest --coverage \"tests/(simple|utils|database)\\.test\\.js\"",
     "build-ui": "cd gui && npm install && npm run build"
@@ -21,6 +21,7 @@
     "@ai-sdk/openai": "^1.2.5",
     "@babel/runtime": "^7.26.10",
     "@langchain/openai": "^0.4.4",
+    "axios": "^1.8.3",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "langchain": "^0.3.19",
@@ -28,6 +29,7 @@
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7",
     "uuid": "^11.1.0",
+    "winston": "^3.17.0",
     "ws": "^8.18.1"
   },
   "devDependencies": {

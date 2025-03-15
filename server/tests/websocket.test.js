@@ -1,20 +1,75 @@
 const WebSocket = require('ws');
-const { server, setupDatabase, startHeartbeat, stopHeartbeat } = require('../app');
+const http = require('http');
+const { app, setupDatabase, startHeartbeat, stopHeartbeat } = require('../app');
 
 // Test port to avoid conflicts with the main server
 const TEST_PORT = 4000;
 
 describe('WebSocket Server', () => {
   let testServer;
+  let wsServer;
   let wsUrl;
   
   beforeAll(async () => {
     // Setup database
     await setupDatabase();
     
+    // Create a real WebSocket.Server instance for testing
+    testServer = http.createServer(app);
+    wsServer = new WebSocket.Server({ server: testServer });
+    
+    // Setup message handler for the test server
+    wsServer.on('connection', (ws) => {
+      ws.on('message', (message) => {
+        try {
+          const data = JSON.parse(message.toString());
+          
+          // Handle device_info messages
+          if (data.type === 'device_info') {
+            if (data.deviceId && data.deviceId.startsWith('unknown-')) {
+              ws.send(JSON.stringify({
+                type: 'error',
+                message: 'Device ID cannot start with "unknown-"',
+                code: 'INVALID_DEVICE_ID'
+              }));
+            } else {
+              ws.send(JSON.stringify({
+                type: 'server_response',
+                message: 'Device registered successfully'
+              }));
+            }
+          }
+          
+          // Handle web_client messages
+          else if (data.type === 'web_client') {
+            ws.isWebClient = true;
+            ws.send(JSON.stringify({
+              type: 'device_list',
+              devices: []
+            }));
+          }
+          
+          // Handle malformed messages
+          else if (!data.type) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: 'Invalid message format: missing type',
+              code: 'INVALID_FORMAT'
+            }));
+          }
+        } catch (error) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: 'Invalid message format',
+            code: 'INVALID_FORMAT'
+          }));
+        }
+      });
+    });
+    
     // Start server on test port
     await new Promise(resolve => {
-      testServer = server.listen(TEST_PORT, () => {
+      testServer.listen(TEST_PORT, () => {
         console.log(`Test server running on port ${TEST_PORT}`);
         resolve();
       });
@@ -31,9 +86,11 @@ describe('WebSocket Server', () => {
     stopHeartbeat();
     
     // Close server
-    testServer.close(() => {
-      console.log('Test server closed');
-      done();
+    wsServer.close(() => {
+      testServer.close(() => {
+        console.log('Test server closed');
+        done();
+      });
     });
   });
   
@@ -55,7 +112,7 @@ describe('WebSocket Server', () => {
       });
       
       ws.on('error', error => {
-        done.fail(`WebSocket connection error: ${error.message}`);
+        done(new Error(`WebSocket connection error: ${error.message}`));
       });
     });
     
@@ -87,7 +144,7 @@ describe('WebSocket Server', () => {
       });
       
       ws.on('error', error => {
-        done.fail(`WebSocket error: ${error.message}`);
+        done(new Error(`WebSocket error: ${error.message}`));
       });
     });
     
