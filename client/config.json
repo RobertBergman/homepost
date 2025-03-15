@@ -1,0 +1,20 @@
+{
+  "serverUrl": "ws://192.168.1.100:3000",
+  "deviceId": "living-room",
+  "deviceName": "Living Room",
+  "location": "Living Room",
+  "micConfig": {
+    "rate": "16000",
+    "channels": "1",
+    "device": "default",
+    "fileType": "wav"
+  },
+  "reconnectInterval": 5000,
+  "maxReconnectInterval": 60000,
+  "reconnectBackoffFactor": 1.5,
+  "speakerEnabled": true,
+  "logLevel": "info",
+  "audioChunkSize": 4096,
+  "audioSendInterval": 500,
+  "heartbeatInterval": 30000
+}
