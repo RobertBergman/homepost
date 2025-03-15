@@ -69,8 +69,31 @@ if (-not (Test-Path $soxPath)) {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [System.IO.Compression.ZipFile]::ExtractToDirectory($tempFile, $soxPath)
         
-        # Add SoX to PATH for this session
-        $env:Path = "$soxPath;$env:Path"
+        # Find the actual Sox executable location
+        $soxExe = $null
+        $directSoxExe = Join-Path $soxPath "sox.exe"
+        if (Test-Path $directSoxExe) {
+            $soxExe = $directSoxExe
+            Write-Host "Found sox.exe in the root directory: $soxExe" -ForegroundColor Green
+        } else {
+            # Look for sox.exe in subdirectories
+            $possibleSoxExes = Get-ChildItem -Path $soxPath -Recurse -Filter "sox.exe" -ErrorAction SilentlyContinue
+            if ($possibleSoxExes -and $possibleSoxExes.Count -gt 0) {
+                $soxExe = $possibleSoxExes[0].FullName
+                Write-Host "Found sox.exe in subdirectory: $soxExe" -ForegroundColor Green
+            }
+        }
+        
+        if ($soxExe) {
+            $soxExeDir = Split-Path -Parent $soxExe
+            # Add SoX to PATH for this session
+            $env:Path = "$soxExeDir;$env:Path"
+            
+            Write-Host "Added $soxExeDir to PATH for this session" -ForegroundColor Green
+        } else {
+            Write-Host "WARNING: sox.exe not found in extracted files" -ForegroundColor Yellow
+            Write-Host "Audio capture may not work properly" -ForegroundColor Yellow
+        }
         
         # Clean up temp file
         Remove-Item $tempFile -Force

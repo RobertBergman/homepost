@@ -37,16 +37,48 @@ if (isWindows) {
   // Add local sox directory to PATH if it exists
   const soxDir = path.join(__dirname, 'sox');
   if (fs.existsSync(soxDir)) {
-    process.env.PATH = \`\${soxDir};\${process.env.PATH}\`;
-    log.info('Added local SoX directory to PATH');
+    // First try to find the sox executable
+    let soxPath = '';
     
-    // Also update mic configuration to use local sox.exe
-    if (config.micConfig) {
-      config.micConfig.endian = 'little';  // Ensure correct endianness for Windows
+    // Check for sox.exe directly in the sox directory
+    if (fs.existsSync(path.join(soxDir, 'sox.exe'))) {
+      soxPath = path.join(soxDir, 'sox.exe');
+    } 
+    // Check for nested structure (sox/sox-14.4.2/sox.exe)
+    else {
+      // Look for any sox-* directories
+      try {
+        const items = fs.readdirSync(soxDir);
+        for (const item of items) {
+          if (item.startsWith('sox-') && fs.statSync(path.join(soxDir, item)).isDirectory()) {
+            const nestedSoxPath = path.join(soxDir, item, 'sox.exe');
+            if (fs.existsSync(nestedSoxPath)) {
+              soxPath = nestedSoxPath;
+              break;
+            }
+          }
+        }
+      } catch (err) {
+        log.error('Error scanning sox directory:', err);
+      }
+    }
+    
+    if (soxPath) {
+      // Add the directory containing sox.exe to PATH
+      const soxExeDir = path.dirname(soxPath);
+      process.env.PATH = \`\${soxExeDir};\${process.env.PATH}\`;
+      log.info(\`Added SoX directory to PATH: \${soxExeDir}\`);
       
-      // Extend mic config with the explicit path to sox.exe
-      config.micConfig.soxPath = path.join(soxDir, 'sox.exe');
-      log.info(\`Using SoX from: \${config.micConfig.soxPath}\`);
+      // Also update mic configuration to use local sox.exe
+      if (config.micConfig) {
+        config.micConfig.endian = 'little';  // Ensure correct endianness for Windows
+        
+        // Extend mic config with the explicit path to sox.exe
+        config.micConfig.soxPath = soxPath;
+        log.info(\`Using SoX from: \${config.micConfig.soxPath}\`);
+      }
+    } else {
+      log.warn('SoX executable not found in the local directory');
     }
   } else {
     log.warn('Local SoX directory not found. Audio capture may not work properly.');
