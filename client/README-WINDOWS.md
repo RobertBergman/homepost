@@ -91,6 +91,16 @@ If installed as a scheduled task:
 2. Verify microphone permissions for the application
 3. Try changing the `device` value in `micConfig` from "default" to another device name
 
+### "spawn sox ENOENT" Error
+
+If you encounter the error `Error: spawn sox ENOENT` when trying to start the client:
+
+1. Use the dedicated fix script by running `start-fixed-windows.bat` instead of the regular startup method
+   - This script automatically downloads SoX (required for audio capture)
+   - It then patches the microphone module to use the correct path to sox.exe
+
+The fix script addresses a common issue where the microphone module can't find the SoX executable, even though it's installed in the client/sox directory.
+
 ### Text-to-speech not working
 
 1. If using OpenAI TTS:
