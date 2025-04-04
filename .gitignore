@@ -24,3 +24,7 @@ npm-debug.log*
 # IDE files
 .vscode/
 .idea/
+
+# Cline configuration
+.clineignore
+.clinerules/
