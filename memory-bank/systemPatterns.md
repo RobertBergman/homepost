@@ -6,58 +6,74 @@ _System architecture, key technical decisions, design patterns, component relati
 HomePost is a client-server system with:
 - A **Node.js backend** providing REST APIs and WebSocket communication
 - A **React frontend** served via a GUI submodule
-- Integration with **OpenAI APIs** for AI assistant features
+- **Client application** for device-side audio capture and communication
+- Integration with **OpenAI APIs** for AI assistant features and TTS
 - Use of **LangChain** and **LangGraph** for AI workflow orchestration
+- **SQLite database** for device, transcription, and alert storage
 - Audio processing components for TTS and voice interaction
 - Cross-platform support scripts, including Windows-specific patches
 
 ## Key Technical Decisions
 - Use of Node.js for backend scalability and ecosystem support
 - React for a responsive, component-based frontend
-- WebSockets for real-time device communication
-- OpenAI API integration for AI capabilities
-- LangChain and LangGraph to manage complex AI workflows
+- WebSockets for real-time device communication with ping/pong health checks
+- OpenAI API integration for AI capabilities (transcription, analysis)
+- LangChain and LangGraph to manage complex AI workflows in a state-based architecture
+- SQLite with optimized pragmas and indexes for data persistence
 - Modular design with clear separation of client and server
+- Exponential backoff for connection resilience
 - Extensive automated testing with Jest and mocks
 
 ## Design Patterns Used
 - **Modular architecture** separating concerns (API, WebSocket, AI, UI)
 - **Observer pattern** via WebSockets for real-time updates
-- **Adapter pattern** for integrating with external APIs (OpenAI)
+- **State Graph pattern** for AI workflow orchestration with LangGraph
+- **Adapter pattern** for integrating with external APIs (OpenAI, ResponsesAPI)
+- **Context Provider pattern** in React for WebSocket state management
 - **Service abstraction** for device and AI interactions
-- **Middleware pattern** in backend request handling
+- **Middleware pattern** in backend request handling and API authentication
+- **Factory pattern** for creating audio transcription requests
 
 ## Component Relationships
 - Frontend communicates with backend via REST and WebSockets
 - Backend orchestrates AI calls and device commands
-- Audio components interface with both frontend and backend
-- LangChain/LangGraph manage AI workflow logic
-- Device management modules interact with hardware or emulators
+- Client devices capture audio and maintain WebSocket connections
+- Backend server processes audio via OpenAI, runs analysis, and stores results
+- LangChain/LangGraph manage AI workflow logic with a multi-node pipeline
+- SQLite database stores device info, transcriptions, and alerts
 
 ## Data Flow
-1. User interacts via UI or voice
-2. Frontend sends commands via REST/WebSocket
-3. Backend processes commands, invokes AI or device services
-4. AI responses or device statuses sent back via WebSocket
-5. Frontend updates UI and/or plays audio feedback
+1. Client devices capture audio and send via WebSockets
+2. Backend transcribes audio using OpenAI API
+3. LangGraph workflow processes transcription through multiple nodes
+4. Alert detection uses ResponsesAPI with keyword fallback
+5. Results stored in database and broadcast to web clients
+6. Web frontend displays devices, transcriptions, and alerts
+7. Commands can be sent back to devices (e.g., TTS responses)
 
 ## Critical Implementation Paths
-- Real-time WebSocket communication loop
+- Real-time WebSocket communication loop with heartbeat monitoring
+- Audio capture, buffering, and transmission
 - AI request/response handling with OpenAI
-- Audio processing pipeline (input, TTS output)
+- LangGraph workflow for transcription analysis
+- Alert detection and notification
+- Database operations with retry logic
 - Device command dispatch and status monitoring
 
 ## Security Considerations
-- Secure API endpoints and WebSocket connections
-- Proper handling of API keys and secrets
-- Input validation and sanitization
-- User authentication and authorization (future scope)
+- WebSocket validation and sanitization
+- Message size limits to prevent abuse
+- Environment variable protection for API keys
+- Input validation with type checking
+- Database parameter binding to prevent injection
+- Basic auth framework for web clients (needs enhancement)
+- File path validation and directory creation security
 
 ## Performance Considerations
-- Minimize AI response latency
+- SQLite optimizations (WAL journal, pragmas, indexes)
+- Audio buffering with configurable chunk sizes
 - Efficient WebSocket message handling
-- Scalable backend architecture
-- Optimized frontend rendering
-
-## Initial Notes
-This architecture is inferred from current project structure and should be refined with explicit design documentation.
+- Retry mechanisms with exponential backoff
+- Reuse of workflow instances
+- Database connection pooling
+- Non-blocking async operations
